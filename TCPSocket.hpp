@@ -15,10 +15,14 @@ class TCPSocket
     sockaddr_in createAddress(uint32_t address, uint16_t port);
     void create();
     void recreate();
-    int getError();
+    
+    template <class... waitArgs>
+    int connectImpl(const IpAddress & address, uint16_t port, waitArgs &&... args);
+    
 public:
     TCPSocket();
     int getSocketHandle();
+    int getError();    
     int connect(const IpAddress &, uint16_t port);
     int connect(const IpAddress &, uint16_t port, std::chrono::microseconds &);    
     int close();

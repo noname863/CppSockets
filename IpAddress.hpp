@@ -14,6 +14,8 @@ public:
     operator uint32_t() const;
     IpAddress & operator=(const uint32_t & address);
     IpAddress & operator=(const std::string & address);
+    bool operator==(const IpAddress &);
+    bool operator!=(const IpAddress &);
     bool isValid();
 };
 

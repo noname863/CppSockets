@@ -11,16 +11,20 @@ IpAddress::IpAddress(std::string address) {
 
 IpAddress::IpAddress(uint8_t byte0, uint8_t byte1, uint8_t byte2, uint8_t byte3) {
     // m_address would be in network order
-    this->m_address = (byte0) | (byte1 << 8) | (byte2 << 16) | (byte3 << 24);
+    this->m_address = (static_cast<uint32_t>(byte0)) | 
+                      (static_cast<uint32_t>(byte1) << 8) | 
+                      (static_cast<uint32_t>(byte2) << 16) | 
+                      (static_cast<uint32_t>(byte3) << 24);
     this->m_valid = true;
 }
 
 IpAddress::IpAddress(uint32_t address) {
-    *this = address;    
+    *this = address;   
 }
 
 IpAddress & IpAddress::operator=(const uint32_t & address) {
-    this->m_address = htonl(address);
+    this->m_address = address;
+    this->m_valid = true;
     return *this;
 }
 
@@ -46,8 +50,8 @@ IpAddress & IpAddress::operator=(const std::string & address) {
             addrinfo hints;
             std::memset(&hints, 0, sizeof(hints));
             hints.ai_family = AF_INET;
-            addrinfo* result = NULL;
-            if (getaddrinfo(address.c_str(), NULL, &hints, &result) == 0)
+            addrinfo* result = nullptr;
+            if (getaddrinfo(address.c_str(), nullptr, &hints, &result) == 0)
             {
                 if (result)
                 {
@@ -60,6 +64,18 @@ IpAddress & IpAddress::operator=(const std::string & address) {
         }
     }
     return *this;
+}
+
+bool IpAddress::operator==(const IpAddress & address) {
+    // they are equal if both are not valid or 
+    // both are valid and addresses are same
+    return (!this->m_valid && !address.m_valid) || 
+           (this->m_valid && address.m_valid && 
+            this->m_address == address.m_address);
+}
+
+bool IpAddress::operator!=(const IpAddress & address) {
+    return !(*this == address);
 }
 
 IpAddress::operator uint32_t() const {
