@@ -19,6 +19,8 @@ class TCPSocket
     template <class... waitArgs>
     int connectImpl(const IpAddress & address, uint16_t port, waitArgs &&... args);
     
+    void makeNonblocking();
+    
 public:
     TCPSocket();
     int getSocketHandle();
@@ -27,7 +29,7 @@ public:
     int connect(const IpAddress &, uint16_t port, std::chrono::microseconds &);    
     int close();
     bool isConnected();
-    int setBlocking(bool);
+    void setBlocking(bool);
     bool isBlocking();
     int setNagle(bool);
     bool isNagle();
@@ -42,9 +44,8 @@ public:
     int waitReadReady();
     int waitWriteReady(std::chrono::microseconds &);
     int waitReadReady(std::chrono::microseconds &);
-    IpAddress getRemoteAddress();
-    IpAddress getRemotePort();
-    uint16_t getLocalPort();
+    std::pair<IpAddress, uint16_t> getRemoteAddressPort();
+    std::pair<IpAddress, uint16_t> getLocalAddressPort();
 };
 
 #endif // TCPSOCKET_HPP
