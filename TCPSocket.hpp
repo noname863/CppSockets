@@ -21,8 +21,18 @@ class TCPSocket
     
     void makeNonblocking();
     
+    bool waitReadFromTimeval(timeval *);
+    bool waitWriteFromTimeval(timeval *);
+    
+    template <class PtrType, long func(int, PtrType, size_t, int), void (TCPSocket::*waitMethod)()>
+    int blockingOp(PtrType data, size_t size);
+    
+    template <class PtrType, long func(int, PtrType, size_t, int)>
+    int nonblockingOp(PtrType data, size_t size, size_t & processed);
+    
 public:
     TCPSocket();
+    TCPSocket(int socketHandle);
     int getSocketHandle();
     int getError();    
     int connect(const IpAddress &, uint16_t port);
@@ -36,14 +46,14 @@ public:
     int flush();
     int send(const void * data, size_t size);
     int send(const void * data, size_t size, size_t & sent);
-    int receive(const void * data, size_t size);
-    int receive(const void * data, size_t size, size_t & received);
+    int receive(void * data, size_t size);
+    int receive(void * data, size_t size, size_t & received);
     bool isWriteReady();
     bool isReadReady();
-    int waitWriteReady();
-    int waitReadReady();
-    int waitWriteReady(std::chrono::microseconds &);
-    int waitReadReady(std::chrono::microseconds &);
+    void waitWriteReady();
+    void waitReadReady();
+    bool waitWriteReady(std::chrono::microseconds &);
+    bool waitReadReady(std::chrono::microseconds &);
     std::pair<IpAddress, uint16_t> getRemoteAddressPort();
     std::pair<IpAddress, uint16_t> getLocalAddressPort();
 };

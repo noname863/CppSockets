@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <iostream>
+#include <sys/select.h>
 
 sockaddr_in TCPSocket::createAddress(uint32_t address, uint16_t port) {
     sockaddr_in addr;
@@ -40,12 +41,36 @@ void TCPSocket::makeNonblocking() {
     ::fcntl(this->socket, F_SETFL, flags | O_NONBLOCK);
 }
 
+bool TCPSocket::waitReadFromTimeval(timeval * t) {
+    fd_set sockets;
+    FD_ZERO(&sockets);
+    FD_SET(this->socket, &sockets);
+    bool result = ::select(this->socket + 1, &sockets, nullptr, nullptr, t);
+    return result;
+}
+
+bool TCPSocket::waitWriteFromTimeval(timeval * t) {
+    fd_set sockets;
+    FD_ZERO(&sockets);    
+    FD_SET(this->socket, &sockets);
+    fd_set testErr;
+    bool result = ::select(this->socket + 1, nullptr, &sockets, nullptr, t);
+    return result;
+}
+
 int TCPSocket::getError() {
     return errno;
 }
 
 TCPSocket::TCPSocket() {
     create();
+}
+
+TCPSocket::TCPSocket(int socketHandle) {
+    this->socket = socketHandle;
+    this->closed = false;
+    makeNonblocking();
+    this->setNagle(true);
 }
 
 int TCPSocket::getSocketHandle() {
@@ -60,16 +85,15 @@ int TCPSocket::connectImpl(const IpAddress & address, uint16_t port, waitArgs &&
     sockaddr_in sockApiAddr = createAddress(address, htons(port));
     
     if (::connect(this->socket, reinterpret_cast<sockaddr *>(&sockApiAddr), sizeof(sockaddr_in)) == -1) {
-        return -1;
-    } else {
-        if (blocking) {
+        if (!this->blocking || getError() != EINPROGRESS) {
+            return getError();            
+        } else {
             waitWriteReady(std::forward<waitArgs>(args)...);
-            // check if connected            
-            if (getRemoteAddressPort().first == IpAddress()) {
-                return -1;
-            }
+            int resultCode;
+            socklen_t resultSize = sizeof(int);
+            getsockopt(this->socket, SOL_SOCKET, SO_ERROR, &resultCode, &resultSize);
+            return resultCode;
         }
-        connected = true;
     }
     return 0;
 }
@@ -77,6 +101,38 @@ int TCPSocket::connectImpl(const IpAddress & address, uint16_t port, waitArgs &&
 int TCPSocket::connect(const IpAddress & address, uint16_t port)
 {
     return connectImpl(address, port);
+}
+
+bool TCPSocket::isWriteReady() {
+    timeval t {0, 0};
+    return waitWriteFromTimeval(&t);
+}
+
+bool TCPSocket::isReadReady() {
+    timeval t = {0, 0};
+    return waitReadFromTimeval(&t);
+}
+
+void TCPSocket::waitWriteReady() {
+    waitWriteFromTimeval(nullptr);
+}
+
+void TCPSocket::waitReadReady() {
+    waitReadFromTimeval(nullptr);
+}
+
+bool TCPSocket::waitWriteReady(std::chrono::microseconds & mc) {
+    timeval t;
+    t.tv_sec = mc.count() / 1000000;
+    t.tv_usec = mc.count() % 1000000;
+    return waitWriteFromTimeval(&t);
+}
+
+bool TCPSocket::waitReadReady(std::chrono::microseconds & mc) {
+    timeval t;
+    t.tv_sec = mc.count() / 1000000;
+    t.tv_usec = mc.count() % 1000000;
+    return waitReadFromTimeval(&t);
 }
 
 int TCPSocket::connect(const IpAddress & address, uint16_t port, std::chrono::microseconds & mc) {
@@ -122,7 +178,7 @@ int TCPSocket::flush() {
         bool prevBlocking = this->blocking;
         this->blocking = true;
         result = send(emptyData, 0);
-        if (result != 0) return result;        
+        if (result != 0) return result;
         this->blocking = prevBlocking;
         result = setNagle(true);
         return result;
@@ -133,40 +189,35 @@ int TCPSocket::flush() {
 int TCPSocket::send(const void * data, size_t size) {
     if (!this->blocking) {
         std::cerr << "partial send of nonblocking socket is not handled!" << std::endl;
-        int result = ::send(this->socket, data, size, MSG_NOSIGNAL);
-        if (result != -1) {
-            return 0;
-        } else {
-            return getError();
-        }
+        size_t fictiveProcessed;
+        return nonblockingOp<const void *, ::send>(data, size, fictiveProcessed);
     }
-    size_t localSent = 0;
-    while (localSent != size) {
-        int result = ::send(this->socket, data, size - localSent, MSG_NOSIGNAL);
-        // TODO: crossplatform wouldblock handling
-        if (result != -1 || getError() == EAGAIN || getError() == EWOULDBLOCK) {
-            localSent += result;
-        } else {
-            return getError();
-        }
-        waitWriteReady();
-    }
-    return 0;
+    return blockingOp<const void *, ::send, &TCPSocket::waitWriteReady>(data, size);
 }
 
 int TCPSocket::send(const void * data, size_t size, size_t & sent) {
     if (!this->blocking) {
-        // TODO: change flags not in linux
-        int result = ::send(this->socket, data, size, MSG_NOSIGNAL);
-        if (result != -1) {
-            sent = result;
-            return 0;
-        } else {
-            return getError();
-        }
+        return nonblockingOp<const void *, ::send>(data, size, sent);
     }
     sent = size;
-    return this->send(data, size);
+    return blockingOp<const void *, ::send, &TCPSocket::waitWriteReady>(data, size);
+}
+
+int TCPSocket::receive(void * data, size_t size) {
+    if (!this->blocking) {
+        std::cerr << "partial receive of nonblocking socket is not handled!" << std::endl;
+        size_t fictiveProcessed;
+        return nonblockingOp<void *, ::recv>(data, size, fictiveProcessed);
+    }
+    return blockingOp<void *, ::recv, &TCPSocket::waitReadReady>(data, size);
+}
+
+int TCPSocket::receive(void * data, size_t size, size_t & received) {
+    if (!this->blocking) {
+        return nonblockingOp<void *, ::recv>(data, size, received);
+    }
+    received = size;
+    return blockingOp<void *, ::recv, &TCPSocket::waitReadReady>(data, size);
 }
 
 std::pair<IpAddress, uint16_t> TCPSocket::getRemoteAddressPort() {
@@ -203,4 +254,29 @@ std::pair<IpAddress, uint16_t> TCPSocket::getLocalAddressPort() {
     return {IpAddress(), 0};
 }
 
+template<class PtrType, long func(int, PtrType, size_t, int), void (TCPSocket::*waitMethod)()>
+int TCPSocket::blockingOp(PtrType data, size_t size) {
+    size_t processed = 0;
+    while (processed != size) {
+        (this->*waitMethod)();        
+        long result = func(this->socket, data, size - processed, MSG_NOSIGNAL);
+        // TODO: crossplatform wouldblock handling
+        if (result != -1) {
+            processed += static_cast<size_t>(result);
+        } else if (getError() != EAGAIN && getError() != EWOULDBLOCK) {
+            return getError();
+        }
+    }
+    return 0;
+}
 
+template<class PtrType, long func(int, PtrType, size_t, int)>
+int TCPSocket::nonblockingOp(PtrType data, size_t size, size_t & processed) {
+    long result = ::send(this->socket, data, size, MSG_NOSIGNAL);
+    if (result != -1) {
+        processed = static_cast<size_t>(result);
+        return 0;
+    } else {
+        return getError();
+    }
+}
